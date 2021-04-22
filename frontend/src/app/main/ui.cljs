@@ -14,6 +14,7 @@
    [app.config :as cfg]
    [app.main.data.auth :refer [logout]]
    [app.main.data.messages :as dm]
+   [app.main.data.events :as ev]
    [app.main.refs :as refs]
    [app.main.store :as st]
    [app.main.ui.auth :refer [auth]]
@@ -106,6 +107,10 @@
 (mf/defc main-page
   {::mf/wrap [#(mf/catch % {:fallback on-main-error})]}
   [{:keys [route] :as props}]
+
+  (mf/use-effect
+   (st/emitf (ptk/event ::ev/initialize route)))
+
   [:& (mf/provider ctx/current-route) {:value route}
    (case (get-in route [:data :name])
      (:auth-login

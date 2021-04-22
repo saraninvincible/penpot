@@ -10,6 +10,7 @@
    [app.common.uuid :as uuid]
    [app.config :as cfg]
    [app.main.data.auth :as da]
+   [app.main.data.events :as ev]
    [app.main.data.messages :as dm]
    [app.main.data.users :as du]
    [app.main.repo :as rp]
@@ -28,6 +29,7 @@
    [app.util.timers :as ts]
    [beicon.core :as rx]
    [cljs.spec.alpha :as s]
+   [potok.core :as ptk]
    [rumext.alpha :as mf]))
 
 (log/initialize!)
