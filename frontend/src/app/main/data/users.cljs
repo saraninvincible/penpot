@@ -134,7 +134,7 @@
     (watch [this state stream]
       (let [team-id (get-current-team-id profile)
             profile (with-meta profile
-                      {::ev/source :login})]
+                      {::ev/source "login"})]
         (rx/concat
          (rx/of (profile-fetched profile)
                 (fetch-teams)

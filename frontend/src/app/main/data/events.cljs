@@ -8,18 +8,27 @@
   (:require
    ["ua-parser-js" :as UAParser]
    [lambdaisland.uri :as u]
+   [app.common.uuid :as uuid]
    [app.config :as cf]
    [app.common.data :as d]
    [app.main.store :as st]
    [app.util.storage :refer [storage]]
    [app.util.globals :as g]
    [app.util.time :as dt]
+   [app.util.http :as http]
    [app.util.object :as obj]
    [beicon.core :as rx]
    [potok.core :as ptk]))
 
-;; NOTE: this ns is explicitly empty for use as namespace where attach
-;; event related keywords.
+;; Defines the maximum buffer size, after events start discarding.
+(def max-buffer-size 1024)
+
+;; Defines the maximum number of events that can go in a single batch.
+(def max-chunk-size 100)
+
+;; Protocol used for attach additional props to potok events
+(defprotocol IProps
+  (-props [_] "Get event props"))
 
 (defn with-latest-from
   "Merges the specified observable sequences into one observable
@@ -81,7 +90,7 @@
   [event]
   (let [data (deref event)]
     {:type :screen
-     :properties {:id (:id data)}}))
+     :props {:id (:id data)}}))
 
 (defn- action->event
   [event]
@@ -89,7 +98,8 @@
     ;; The `:name` is mandatory
     (when (:name data)
       {:type :action
-       :properties data})))
+       :name (:name data)
+       :props (dissoc data :name)})))
 
 (defn- profile-fetched->event
   [event]
@@ -102,21 +112,25 @@
                :default-team-id
                :default-project-id]]
     {:type :identify
-     :properties (select-keys data props)
-     :context (cond-> @context
-                (::source mdata)
-                (assoc :source (::source mdata)))}))
+     :name (::source mdata "identify")
+     :props (select-keys data props)
+     :context @context}))
+
+(defn- generic-action
+  [name]
+  (fn [event]
+    {:type :action
+     :name name
+     :props (if (satisfies? IProps event)
+              (-props event)
+              {})}))
 
 (def ^:private events
   {::action action->event
    :app.util.router/navigate navigate->event
+   :app.main.data.users/logout (generic-action "logout")
+   :app.main.data.dashboard/create-team (generic-action "create-team")
    :app.main.data.users/profile-fetched profile-fetched->event})
-
-;; Defines the maximum buffer size, after events start discarding.
-(def max-buffer-size 1024)
-
-;; Defines the maximum number of events that can go in a single batch.
-(def max-chunk-size 100)
 
 (defn- append-to-buffer
   [buffer item]
@@ -130,11 +144,12 @@
 
 (defn- persist-events
   [events]
-  (let [uri (u/join cf/public-uri "telemetry")]
-    (if (odd? (rand-int 1000))
-      (->> (rx/of uri)
-           (rx/delay 1000))
-      (rx/throw (ex-info "foobar" {})))))
+  (let [uri    (u/join cf/public-uri "events")
+        params {:events events}]
+    (->> (http/send! {:uri uri
+                      :method :post
+                      :body (http/transit-data params)})
+         #_(rx/tap #(prn "resp:" %)))))
 
 (defmethod ptk/resolve ::persistence
   [_ {:keys [buffer] :as params}]
@@ -157,7 +172,7 @@
       (watch [_ state stream]
         (->> (rx/from-atom buffer)
              (rx/filter #(pos? (count %)))
-             (rx/debounce 2000)
+             (rx/debounce 5000)
              (rx/map #(ptk/event ::persistence {:buffer buffer}))))
 
       ptk/EffectEvent
@@ -165,22 +180,18 @@
         (let [profile (->> (rx/from-atom storage)
                            (rx/map :profile)
                            (rx/map :id)
-                           (rx/dedupe))
-
-              source  (->> stream
-                           (rx/map (fn [event]
-                                     (let [type    (ptk/type event)
-                                           impl-fn (get events type)]
-                                       (when (fn? impl-fn)
-                                         (impl-fn event)))))
-                           (rx/filter some?))]
-
-          (->> source
+                           (rx/dedupe))]
+          (->> stream
                (with-latest-from profile)
                (rx/map (fn [result]
                          (let [event      (aget result 0)
-                               profile-id (aget result 1)]
-                           (assoc event :profile-id profile-id))))
+                               profile-id (aget result 1)
+                               type       (ptk/type event)
+                               impl-fn    (get events type)]
+                           (when (fn? impl-fn)
+                             (-> (impl-fn event)
+                                 (assoc :profile-id profile-id)
+                                 (assoc :id (uuid/next)))))))
                (rx/filter :profile-id)
                (rx/subs (fn [result]
                           (swap! buffer append-to-buffer result))

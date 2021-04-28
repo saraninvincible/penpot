@@ -11,6 +11,7 @@
    [app.common.spec :as us]
    [app.common.uuid :as uuid]
    [app.main.repo :as rp]
+   [app.main.data.events :as ev]
    [app.main.data.users :as du]
    [app.util.i18n :as i18n :refer [tr]]
    [app.util.router :as rt]
@@ -238,11 +239,15 @@
   [{:keys [name] :as params}]
   (us/assert string? name)
   (ptk/reify ::create-team
+    ev/IProps
+    (-props [_]
+      {:name name})
+
     ptk/WatchEvent
     (watch [_ state stream]
       (let [{:keys [on-success on-error]
              :or {on-success identity
-                  on-error identity}} (meta params)]
+                  on-error rx/throw}} (meta params)]
         (->> (rp/mutation! :create-team {:name name})
              (rx/tap on-success)
              (rx/catch on-error))))))
@@ -316,7 +321,7 @@
     (watch [_ state stream]
       (let [{:keys [on-success on-error]
              :or {on-success identity
-                  on-error identity}} (meta params)]
+                  on-error rx/throw}} (meta params)]
         (rx/concat
          (when (uuid? reassign-to)
            (->> (rp/mutation! :update-team-member-role {:team-id id
@@ -337,7 +342,7 @@
     (watch [_ state stream]
       (let [{:keys [on-success on-error]
              :or {on-success identity
-                  on-error identity}} (meta params)]
+                  on-error rx/throw}} (meta params)]
         (->> (rp/mutation! :invite-team-member params)
              (rx/tap on-success)
              (rx/catch on-error))))))
@@ -350,7 +355,7 @@
     (watch [_ state stream]
       (let [{:keys [on-success on-error]
              :or {on-success identity
-                  on-error identity}} (meta params)]
+                  on-error rx/throw}} (meta params)]
         (->> (rp/mutation! :delete-team {:id id})
              (rx/tap on-success)
              (rx/catch on-error))))))
@@ -368,7 +373,7 @@
         (let [name (name (gensym "New Project "))
               {:keys [on-success on-error]
                :or {on-success identity
-                    on-error identity}} (meta params)]
+                    on-error rx/throw}} (meta params)]
           (->> (rp/mutation! :create-project {:name name :team-id team-id})
                (rx/tap on-success)
                (rx/map #(partial created %))
