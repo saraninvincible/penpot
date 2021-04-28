@@ -7,7 +7,6 @@
 (ns app.main.ui.auth
   (:require
    [app.common.uuid :as uuid]
-   [app.main.data.auth :as da]
    [app.main.data.messages :as dm]
    [app.main.data.users :as du]
    [app.main.repo :as rp]
