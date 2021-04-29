@@ -123,7 +123,12 @@
             (rx/mapcat (fn [profile]
                          (if (= uuid/zero (:id profile))
                            (rx/empty)
-                           (rx/of (fetch-teams))))))))))
+                           (rx/of
+                            (fetch-teams)
+                            (ev/event {::ev/type "identify"
+                                       ::ev/name "page-load"
+                                       ::ev/context @ev/context}))))))))))
+
 
 ;; --- EVENT: login
 

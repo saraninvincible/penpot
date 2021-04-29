@@ -7,17 +7,15 @@
 (ns app.main.data.events
   (:require
    ["ua-parser-js" :as UAParser]
-   [lambdaisland.uri :as u]
-   [app.common.uuid :as uuid]
-   [app.config :as cf]
    [app.common.data :as d]
-   [app.main.store :as st]
-   [app.util.storage :refer [storage]]
+   [app.config :as cf]
    [app.util.globals :as g]
-   [app.util.time :as dt]
    [app.util.http :as http]
    [app.util.object :as obj]
+   [app.util.storage :refer [storage]]
+   [app.util.time :as dt]
    [beicon.core :as rx]
+   [lambdaisland.uri :as u]
    [potok.core :as ptk]))
 
 ;; Defines the maximum buffer size, after events start discarding.
@@ -26,9 +24,12 @@
 ;; Defines the maximum number of events that can go in a single batch.
 (def max-chunk-size 100)
 
-;; Protocol used for attach additional props to potok events
-(defprotocol IProps
-  (-props [_] "Get event props"))
+(defn event
+  "A simple action event constructor."
+  [{:keys [::name] :as props}]
+  (ptk/data-event ::generic-event props))
+
+;; --- CONTEXT
 
 (defn- collect-context
   []
@@ -64,28 +65,35 @@
 (def context
   (delay (d/without-nils (collect-context))))
 
-(defn- navigate->event
+;; --- EVENT TRANSLATION
+
+(defmulti ^:private process-event ptk/type)
+(defmethod process-event :default [_] nil)
+
+(defmethod process-event ::generic-event
+  [event]
+  (let [data (deref event)]
+    (when (::name data)
+      (d/without-nils
+       {:type    (::type data "action")
+        :name    (::name data)
+        :context (::context data)
+        :props   (dissoc data ::name ::type ::context)}))))
+
+(defmethod process-event :app.util.router/navigated
   [event]
   (let [match (deref event)
-        props {:route (name (get-in match [:data :name]))
-               :path (:path match)
-               :path-params (:path-params match)
-               :query-params (:query-params match)}]
+        route (get-in match [:data :name])
+        props {:route      (name route)
+               :team-id    (get-in match [:path-params :team-id])
+               :file-id    (get-in match [:path-params :file-id])
+               :project-id (get-in match [:path-params :project-id])}]
     {:name "navigate"
      :type "action"
      :timestamp (dt/now)
      :props (d/without-nils props)}))
 
-(defn- action->event
-  [event]
-  (let [data (deref event)]
-    ;; The `:name` is mandatory
-    (when (:name data)
-      {:type :action
-       :name (:name data)
-       :props (dissoc data :name)})))
-
-(defn- logged-in->event
+(defmethod process-event :app.main.data.users/logged-in
   [event]
   (let [data  (deref event)
         mdata (meta data)
@@ -101,22 +109,26 @@
      :props (-> (select-keys data props)
                 (assoc :signin-source (::source mdata)))}))
 
-(defn- generic-action
-  [name]
-  (fn [event]
+(defmethod process-event :app.main.data.dashboard/project-created
+  [event]
+  (let [data (deref event)]
     {:type "action"
-     :name name
-     :props (if (satisfies? IProps event)
-              (-props event)
-              {})}))
+     :name "create-page"
+     :props {:name (:name data)
+             :team-id (:team-id data)}}))
 
-(def ^:private events
-  {::action action->event
-   :app.util.router/navigated navigate->event
-   :app.main.data.users/logout (generic-action "logout")
-   :app.main.data.users/logged-in logged-in->event
-   :app.main.data.dashboard/create-team (generic-action "create-team")
-   })
+(defn- event->generic-action
+  [event name]
+  {:type "action"
+   :name name
+   :props {}})
+
+(defmethod process-event :app.main.data.users/logout
+  [event]
+  (event->generic-action event "logout"))
+
+
+;; --- MAIN LOOP
 
 (defn- append-to-buffer
   [buffer item]
@@ -165,7 +177,8 @@
         (let [profile (->> (rx/from-atom storage {:emit-current-value? true})
                            (rx/map :profile)
                            (rx/map :id)
-                           (rx/dedupe))]
+                           (rx/dedupe))
+              events  (methods process-event)]
           (->> stream
                (rx/with-latest-from profile)
                (rx/map (fn [result]
@@ -174,13 +187,12 @@
                                type       (ptk/type event)
                                impl-fn    (get events type)]
                            (when (fn? impl-fn)
-                             (-> (impl-fn event)
-                                 (update :profile-id #(or % profile-id))
-                                 (assoc :timestamp (dt/now))
-                                 #_(update :context d/merge @context))))))
+                             (some-> (impl-fn event)
+                                     (update :profile-id #(or % profile-id))
+                                     (assoc :timestamp (dt/now)))))))
                (rx/filter some?)
                (rx/filter :profile-id)
-               (rx/tap #(prn "EVT" (select-keys % [:name :type])))
+               (rx/tap #(prn "EVT" (:type %) (:name %) (:props %)))
                (rx/subs (fn [event]
                           (swap! buffer append-to-buffer event))
                         (fn [error]
