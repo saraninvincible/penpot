@@ -30,64 +30,6 @@
 (defprotocol IProps
   (-props [_] "Get event props"))
 
-(comment
-  {:name "register"
-   :type "identify"
-   :timestamp 10203044
-   :profile-id 1
-   :props
-   {:source "register"
-    :email "niwi@niwi.nz"
-    :fullname "andrey antukh"}
-   :context
-   {:app-version "1.1"}}
-
-  {:name "navigate"
-   :type "action"
-   :props {:route-id "dashboard"}
-   :context {}}
-
-  {:name "open-comments"
-   :type "action"
-   :props {:source "viewer"}
-   :context {}})
-
-
-(defn with-latest-from
-  "Merges the specified observable sequences into one observable
-  sequence by using the selector function only when the source
-  observable sequence (the instance) produces an element."
-  ([other source]
-   (let [wlf (.-withLatestFrom rx/rxop)
-         cmb (cond
-               (rx/observable? other) (wlf other)
-               (array? other)         (.apply wlf nil other)
-               (sequential? other)    (apply wlf other)
-               :else                  (throw (ex-info "Invalid argument" {:type ::invalid-argument})))]
-     (rx/pipe source cmb)))
-  ([o1 o2 source]
-   (rx/pipe source (.withLatestFrom rx/rxop o1 o2)))
-  ([o1 o2 o3 source]
-   (rx/pipe source (.withLatestFrom rx/rxop o1 o2 o3)))
-  ([o1 o2 o3 o4 source]
-   (rx/pipe source (.withLatestFrom rx/rxop o1 o2 o3 o4)))
-  ([o1 o2 o3 o4 o5 source]
-   (rx/pipe source (.withLatestFrom rx/rxop o1 o2 o3 o4 o5)))
-  ([o1 o2 o3 o4 o5 o6 source]
-   (rx/pipe source (.withLatestFrom rx/rxop o1 o2 o3 o4 o5 o6))))
-
-
-(defn throttle
-  "Returns an observable sequence that emits only the
-  first item emitted by the source Observable during
-  sequential time windows of a specified duration."
-  ([ms ob]
-   (rx/pipe ob (.throttleTime rx/rxop ms)))
-  ([ms config ob]
-   (let [{:keys [leading trailing]
-          :or {leading true trailing false}} config]
-     (rx/pipe ob (.throttleTime rx/rxop ms #js {:leading leading :trailing trailing})))))
-
 (defn- collect-context
   []
   (let [uagent (UAParser.)]
@@ -225,7 +167,7 @@
                            (rx/map :id)
                            (rx/dedupe))]
           (->> stream
-               (with-latest-from profile)
+               (rx/with-latest-from profile)
                (rx/map (fn [result]
                          (let [event      (aget result 0)
                                profile-id (aget result 1)
@@ -238,6 +180,7 @@
                                  #_(update :context d/merge @context))))))
                (rx/filter some?)
                (rx/filter :profile-id)
+               (rx/tap #(prn "EVT" (select-keys % [:name :type])))
                (rx/subs (fn [event]
                           (swap! buffer append-to-buffer event))
                         (fn [error]
