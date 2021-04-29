@@ -130,18 +130,22 @@
 (defn- logged-in
   [profile]
   (ptk/reify ::logged-in
+    IDeref
+    (-deref [_] profile)
+
     ptk/WatchEvent
     (watch [this state stream]
       (let [team-id (get-current-team-id profile)
             profile (with-meta profile
                       {::ev/source "login"})]
-        (rx/concat
-         (rx/of (profile-fetched profile)
-                (fetch-teams)
-                (rt/nav' :dashboard-projects {:team-id team-id}))
-         (when-not (get-in profile [:props :onboarding-viewed])
-           (->> (rx/of (modal/show {:type :onboarding}))
-                (rx/delay 1000))))))))
+        (->> (rx/concat
+              (rx/of (profile-fetched profile)
+                     (fetch-teams)
+                     (rt/nav' :dashboard-projects {:team-id team-id}))
+              (when-not (get-in profile [:props :onboarding-viewed])
+                (->> (rx/of (modal/show {:type :onboarding}))
+                     (rx/delay 1000))))
+             (rx/observe-on :async))))))
 
 (s/def ::login-params
   (s/keys :req-un [::email ::password]))
@@ -153,7 +157,7 @@
     ptk/WatchEvent
     (watch [this state s]
       (let [{:keys [on-error on-success]
-             :or {on-error identity
+             :or {on-error rx/throw
                   on-success identity}} (meta data)
             params {:email email
                     :password password
@@ -162,6 +166,9 @@
              (rx/mapcat #(rp/mutation :login params))
              (rx/tap on-success)
              (rx/catch on-error)
+             (rx/map (fn [profile]
+                       (with-meta profile
+                         {::ev/source "login"})))
              (rx/map logged-in))))))
 
 (defn login-from-token
@@ -171,29 +178,35 @@
     (watch [this state s]
       (rx/of (logged-in
               (with-meta profile
-                {::ev/source "token"}))))))
+                {::ev/source "login-with-token"}))))))
 
 ;; --- EVENT: logout
 
-(defn logout
+(defn logged-out
   []
-  (ptk/reify ::logout
+  (ptk/reify ::logged-out
     ptk/UpdateEvent
     (update [_ state]
       (select-keys state [:route :router :session-id :history]))
 
     ptk/WatchEvent
     (watch [_ state s]
-      (rx/concat
-       (->> (rp/mutation :logout)
-            (rx/catch (constantly (rx/empty)))
-            (rx/ignore))
-       (rx/of (rt/nav :auth-login))))
+      (rx/of (rt/nav :auth-login)))
 
     ptk/EffectEvent
     (effect [_ state s]
       (reset! storage {})
       (i18n/reset-locale))))
+
+(defn logout
+  []
+  (ptk/reify ::logout
+    ptk/WatchEvent
+    (watch [_ state s]
+      (->> (rp/mutation :logout)
+           (rx/delay-at-least 300)
+           (rx/catch (constantly (rx/of 1)))
+           (rx/map logged-out)))))
 
 ;; --- EVENT: register
 

@@ -30,6 +30,29 @@
 (defprotocol IProps
   (-props [_] "Get event props"))
 
+(comment
+  {:name "register"
+   :type "identify"
+   :timestamp 10203044
+   :profile-id 1
+   :props
+   {:source "register"
+    :email "niwi@niwi.nz"
+    :fullname "andrey antukh"}
+   :context
+   {:app-version "1.1"}}
+
+  {:name "navigate"
+   :type "action"
+   :props {:route-id "dashboard"}
+   :context {}}
+
+  {:name "open-comments"
+   :type "action"
+   :props {:source "viewer"}
+   :context {}})
+
+
 (defn with-latest-from
   "Merges the specified observable sequences into one observable
   sequence by using the selector function only when the source
@@ -53,10 +76,23 @@
   ([o1 o2 o3 o4 o5 o6 source]
    (rx/pipe source (.withLatestFrom rx/rxop o1 o2 o3 o4 o5 o6))))
 
+
+(defn throttle
+  "Returns an observable sequence that emits only the
+  first item emitted by the source Observable during
+  sequential time windows of a specified duration."
+  ([ms ob]
+   (rx/pipe ob (.throttleTime rx/rxop ms)))
+  ([ms config ob]
+   (let [{:keys [leading trailing]
+          :or {leading true trailing false}} config]
+     (rx/pipe ob (.throttleTime rx/rxop ms #js {:leading leading :trailing trailing})))))
+
 (defn- collect-context
   []
   (let [uagent (UAParser.)]
     (d/merge
+     {:app-version (:full @cf/version)}
      (let [browser (.getBrowser uagent)]
        {:browser (obj/get browser "name")
         :browser-version (obj/get browser "version")})
@@ -88,9 +124,15 @@
 
 (defn- navigate->event
   [event]
-  (let [data (deref event)]
-    {:type :screen
-     :props {:id (:id data)}}))
+  (let [match (deref event)
+        props {:route (name (get-in match [:data :name]))
+               :path (:path match)
+               :path-params (:path-params match)
+               :query-params (:query-params match)}]
+    {:name "navigate"
+     :type "action"
+     :timestamp (dt/now)
+     :props (d/without-nils props)}))
 
 (defn- action->event
   [event]
@@ -101,7 +143,7 @@
        :name (:name data)
        :props (dissoc data :name)})))
 
-(defn- profile-fetched->event
+(defn- logged-in->event
   [event]
   (let [data  (deref event)
         mdata (meta data)
@@ -111,15 +153,16 @@
                :is-muted
                :default-team-id
                :default-project-id]]
-    {:type :identify
-     :name (::source mdata "identify")
-     :props (select-keys data props)
-     :context @context}))
+    {:name "signin"
+     :type "identify"
+     :profile-id (:id data)
+     :props (-> (select-keys data props)
+                (assoc :signin-source (::source mdata)))}))
 
 (defn- generic-action
   [name]
   (fn [event]
-    {:type :action
+    {:type "action"
      :name name
      :props (if (satisfies? IProps event)
               (-props event)
@@ -127,10 +170,11 @@
 
 (def ^:private events
   {::action action->event
-   :app.util.router/navigate navigate->event
+   :app.util.router/navigated navigate->event
    :app.main.data.users/logout (generic-action "logout")
+   :app.main.data.users/logged-in logged-in->event
    :app.main.data.dashboard/create-team (generic-action "create-team")
-   :app.main.data.users/profile-fetched profile-fetched->event})
+   })
 
 (defn- append-to-buffer
   [buffer item]
@@ -146,10 +190,9 @@
   [events]
   (let [uri    (u/join cf/public-uri "events")
         params {:events events}]
-    (->> (http/send! {:uri uri
-                      :method :post
-                      :body (http/transit-data params)})
-         #_(rx/tap #(prn "resp:" %)))))
+    (http/send! {:uri uri
+                 :method :post
+                 :body (http/transit-data params)})))
 
 (defmethod ptk/resolve ::persistence
   [_ {:keys [buffer] :as params}]
@@ -172,12 +215,12 @@
       (watch [_ state stream]
         (->> (rx/from-atom buffer)
              (rx/filter #(pos? (count %)))
-             (rx/debounce 5000)
+             (rx/debounce 2000)
              (rx/map #(ptk/event ::persistence {:buffer buffer}))))
 
       ptk/EffectEvent
       (effect [_ state stream]
-        (let [profile (->> (rx/from-atom storage)
+        (let [profile (->> (rx/from-atom storage {:emit-current-value? true})
                            (rx/map :profile)
                            (rx/map :id)
                            (rx/dedupe))]
@@ -190,10 +233,12 @@
                                impl-fn    (get events type)]
                            (when (fn? impl-fn)
                              (-> (impl-fn event)
-                                 (assoc :profile-id profile-id)
-                                 (assoc :id (uuid/next)))))))
+                                 (update :profile-id #(or % profile-id))
+                                 (assoc :timestamp (dt/now))
+                                 #_(update :context d/merge @context))))))
+               (rx/filter some?)
                (rx/filter :profile-id)
-               (rx/subs (fn [result]
-                          (swap! buffer append-to-buffer result))
+               (rx/subs (fn [event]
+                          (swap! buffer append-to-buffer event))
                         (fn [error]
                           (js/console.log "error" error)))))))))

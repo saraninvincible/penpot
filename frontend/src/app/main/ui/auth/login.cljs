@@ -149,15 +149,13 @@
 
     [:div.links
      [:div.link-entry
-      [:a {:on-click #(st/emit! (rt/nav :auth-recovery-request))
-           :tab-index "5"}
+      [:a {:on-click #(st/emit! (rt/nav :auth-recovery-request))}
        (tr "auth.forgot-password")]]
 
      (when cfg/registration-enabled
        [:div.link-entry
         [:span (tr "auth.register") " "]
-        [:a {:on-click #(st/emit! (rt/nav :auth-register {} params))
-             :tab-index "6"}
+        [:a {:on-click #(st/emit! (rt/nav :auth-register {} params))}
          (tr "auth.register-submit")]])]
 
     [:& login-buttons {:params params}]
@@ -166,6 +164,5 @@
       [:div.links.demo
        [:div.link-entry
         [:span (tr "auth.create-demo-profile") " "]
-        [:a {:on-click (st/emitf (du/create-demo-profile))
-             :tab-index "6"}
+        [:a {:on-click (st/emitf (du/create-demo-profile))}
          (tr "auth.create-demo-account")]]])]])

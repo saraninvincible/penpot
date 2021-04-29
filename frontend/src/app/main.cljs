@@ -71,7 +71,7 @@
       (st/emit! (dm/assign-exception {:type :not-found}))
 
       :else
-      (st/emit! #(assoc % :route match)))))
+      (st/emit! (rt/navigated match)))))
 
 (defn init-ui
   []
@@ -92,10 +92,12 @@
       ptk/WatchEvent
       (watch [_ state stream]
         (rx/merge
-         (rx/of (du/initialize-profile)
-                (ptk/event ::ev/initialize))
+         (rx/of
+          (ptk/event ::ev/initialize)
+          (du/initialize-profile))
          (->> stream
               (rx/filter (ptk/type? ::du/profile-fetched))
+              (rx/take 1)
               (rx/map deref)
               (rx/mapcat on-profile)))))))
 

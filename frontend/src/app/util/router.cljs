@@ -58,6 +58,15 @@
 
 ;; --- Navigate (Event)
 
+(defn navigated
+  [match]
+  (ptk/reify ::navigated
+    IDeref
+    (-deref [_] match)
+
+    ptk/UpdateEvent
+    (update [_ state]
+      (assoc state :route match))))
 
 (defn navigate*
   [id params qparams replace]
