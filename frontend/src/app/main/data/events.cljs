@@ -14,6 +14,7 @@
    [app.util.object :as obj]
    [app.util.storage :refer [storage]]
    [app.util.time :as dt]
+   [app.util.i18n :as i18n]
    [beicon.core :as rx]
    [lambdaisland.uri :as u]
    [potok.core :as ptk]))
@@ -35,7 +36,8 @@
   []
   (let [uagent (UAParser.)]
     (d/merge
-     {:app-version (:full @cf/version)}
+     {:app-version (:full @cf/version)
+      :locale @i18n/locale}
      (let [browser (.getBrowser uagent)]
        {:browser (obj/get browser "name")
         :browser-version (obj/get browser "version")})
@@ -63,7 +65,9 @@
        {:device-arch (obj/get cpu "architecture")}))))
 
 (def context
-  (delay (d/without-nils (collect-context))))
+  (atom (d/without-nils (collect-context))))
+
+(add-watch i18n/locale ::events #(swap! context assoc :locale %4))
 
 ;; --- EVENT TRANSLATION
 
@@ -114,8 +118,25 @@
   (let [data (deref event)]
     {:type "action"
      :name "create-page"
-     :props {:name (:name data)
+     :props {:id (:id data)
              :team-id (:team-id data)}}))
+
+(defmethod process-event :app.main.data.dashboard/file-created
+  [event]
+  (let [data (deref event)]
+    {:type "action"
+     :name "create-file"
+     :props {:id (:id data)
+             :project-id (:project-id data)}}))
+
+(defmethod process-event :app.main.data.workspace/create-page
+  [event]
+  (let [data (deref event)]
+    {:type "action"
+     :name "create-page"
+     :props {:id (:id data)
+             :file-id (:file-id data)
+             :project-id (:project-id data)}}))
 
 (defn- event->generic-action
   [event name]
@@ -189,7 +210,8 @@
                            (when (fn? impl-fn)
                              (some-> (impl-fn event)
                                      (update :profile-id #(or % profile-id))
-                                     (assoc :timestamp (dt/now)))))))
+                                     (assoc :timestamp (dt/now))
+                                     (update :context #(d/merge @context %)))))))
                (rx/filter some?)
                (rx/filter :profile-id)
                (rx/tap #(prn "EVT" (:type %) (:name %) (:props %)))

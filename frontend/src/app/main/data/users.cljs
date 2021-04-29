@@ -126,8 +126,7 @@
                            (rx/of
                             (fetch-teams)
                             (ev/event {::ev/type "identify"
-                                       ::ev/name "page-load"
-                                       ::ev/context @ev/context}))))))))))
+                                       ::ev/name "page-load"}))))))))))
 
 
 ;; --- EVENT: login
