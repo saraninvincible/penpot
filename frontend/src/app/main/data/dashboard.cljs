@@ -248,7 +248,7 @@
              (rx/tap on-success)
              (rx/catch on-error)
              (rx/map (fn [team]
-                       (ev/event {::ev/name "create-team" :id (:id team)}))))))))
+                       (ptk/event ::ev/event {::ev/name "create-team" :id (:id team)}))))))))
 
 (defn update-team
   [{:keys [id name] :as params}]

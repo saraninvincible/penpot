@@ -25,10 +25,9 @@
 ;; Defines the maximum number of events that can go in a single batch.
 (def max-chunk-size 100)
 
-(defn event
-  "A simple action event constructor."
-  [{:keys [::name] :as props}]
-  (ptk/data-event ::generic-event props))
+;; Defines the time window within events belong to the same session.
+(def session-timeout
+  (dt/duration {:minutes 30}))
 
 ;; --- CONTEXT
 
@@ -74,7 +73,7 @@
 (defmulti ^:private process-event ptk/type)
 (defmethod process-event :default [_] nil)
 
-(defmethod process-event ::generic-event
+(defmethod process-event ::event
   [event]
   (let [data (deref event)]
     (when (::name data)
@@ -195,27 +194,44 @@
 
       ptk/EffectEvent
       (effect [_ state stream]
-        (let [profile (->> (rx/from-atom storage {:emit-current-value? true})
+        (let [events  (methods process-event)
+              session (atom nil)
+
+              profile (->> (rx/from-atom storage {:emit-current-value? true})
                            (rx/map :profile)
                            (rx/map :id)
                            (rx/dedupe))
-              events  (methods process-event)]
-          (->> stream
-               (rx/with-latest-from profile)
-               (rx/map (fn [result]
-                         (let [event      (aget result 0)
-                               profile-id (aget result 1)
-                               type       (ptk/type event)
-                               impl-fn    (get events type)]
-                           (when (fn? impl-fn)
-                             (some-> (impl-fn event)
-                                     (update :profile-id #(or % profile-id))
-                                     (assoc :timestamp (dt/now))
-                                     (update :context #(d/merge @context %)))))))
-               (rx/filter some?)
-               (rx/filter :profile-id)
-               (rx/tap #(prn "EVT" (:type %) (:name %) (:props %)))
+
+              source  (->> stream
+                           (rx/with-latest-from profile)
+                           (rx/map (fn [result]
+                                     (let [event      (aget result 0)
+                                           profile-id (aget result 1)
+                                           type       (ptk/type event)
+                                           impl-fn    (get events type)]
+                                       (when (fn? impl-fn)
+                                         (some-> (impl-fn event)
+                                                 (update :profile-id #(or % profile-id)))))))
+                           (rx/filter :profile-id)
+                           (rx/map (fn [event]
+                                     (let [session* (or @session (dt/now))
+                                           context  (-> @context
+                                                        (d/merge (:context event))
+                                                        (assoc :session session*))]
+                                       (swap! session (constantly session*))
+                                       (-> event
+                                           (assoc :timestamp (dt/now))
+                                           (assoc :context context)))))
+                           (rx/share))]
+          (->> source
+               (rx/switch-map #(rx/timer (inst-ms session-timeout)))
+               (rx/subs #(reset! session nil)))
+
+          (->> source
+               (rx/tap #(prn "EVT" (:type %) (:name %) (:session-id (:context %))))
                (rx/subs (fn [event]
                           (swap! buffer append-to-buffer event))
                         (fn [error]
-                          (js/console.log "error" error)))))))))
+                          (js/console.log "error" error))
+                        (fn []
+                          (js/console.log "complete")))))))))

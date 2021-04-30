@@ -125,8 +125,9 @@
                            (rx/empty)
                            (rx/of
                             (fetch-teams)
-                            (ev/event {::ev/type "identify"
-                                       ::ev/name "page-load"}))))))))))
+                            (ptk/event ::ev/event
+                                       {::ev/type "identify"
+                                        ::ev/name "page-load"}))))))))))
 
 
 ;; --- EVENT: login
